@@ -1,0 +1,9 @@
+* Compile file singly (should work!)
+* Re-order includes (should work!)
+* Traverse DAG deeper
+* Try compiling again (should work!)
+* For each remaining include:
+  * Remove include. Try compiling. If it works, push that include to all children.
+  * Replace include with components. Try compiling. If it works, push that include to all children.
+  * Leave include.
+* Done!
