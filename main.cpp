@@ -87,6 +87,8 @@ public:
   vector<string> data;
   int includepos;
   vector<Include> includes;
+  vector<File *> depends;
+  int state;
 
   void sort_includes(const string &fnam);
 
@@ -108,7 +110,6 @@ public:
   }
   
   Incsort(const string &in_vl) {
-    printf("incsort %s\n", in_vl.c_str());
     vl = in_vl;
   }
 };
@@ -120,7 +121,7 @@ void File::sort_includes(const string &fnam) {
   sort(includes.begin(), includes.end(), Incsort(pri));
 }
 
-File::File() { };
+File::File() { state = 1; };  // break shit
 File::File(const string &str) {
   includepos = 0;
   int incl = 0;
@@ -150,6 +151,7 @@ File::File(const string &str) {
   for(int i = 0; i < includes.size(); i++) {
     includes[i].print();
   }
+  state = 0;
 }
  
 bool compiles(const string &filname, const File &file) {
@@ -178,11 +180,57 @@ bool compiles(const string &filname, const File &file) {
   
   char beefy[256];
   if(dn)
-    sprintf(beefy, "cd %s && g++ `sdl-config --cflags` -mno-cygwin -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -c -o /dev/null %s", root.c_str(), filname.c_str());
+    sprintf(beefy, "cd %s && g++ `sdl-config --cflags` -mno-cygwin -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -x c++ -c -o /dev/null %s 2> /dev/null", root.c_str(), filname.c_str());
   else
-    sprintf(beefy, "cd %s && g++ -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -c -o /dev/null %s", root.c_str(), filname.c_str());
+    sprintf(beefy, "cd %s && g++ -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -x c++ -c -o /dev/null %s 2> /dev/null", root.c_str(), filname.c_str());
   int rv = system(beefy);
   return rv == 0;
+}
+
+void optimize(const string &start, map<string, File> *files) {
+  File *tfile = &(*files)[start];
+  assert(tfile->state != 1);
+  if(tfile->state == 0) {
+    tfile->state = 1;
+    for(int i = 0; i < tfile->includes.size(); i++) {
+      if(!tfile->includes[i].system) {
+        optimize(tfile->includes[i].id, files);
+      }
+    }
+    for(int i = 0; i < tfile->includes.size(); ) {
+      //printf("  %s: considering %s, %d/%d\n", start.c_str(), tfile->includes[i].id.c_str(), i, tfile->includes.size());
+      //printf("  %s: considering %s\n", start.c_str(), tfile->includes[i].id.c_str());
+      File tempfile;
+      tempfile = *tfile;
+      tempfile.includes.erase(tempfile.includes.begin() + i);
+      if(compiles(start, tempfile)) {
+        // Remove it entirely!
+        printf("  %s: removed %s\n", start.c_str(), tfile->includes[i].id.c_str());
+        for(int j = 0; j < tfile->depends.size(); j++)
+          tfile->depends[j]->includes.push_back(tfile->includes[i]);
+        *tfile = tempfile;
+        continue;
+      }
+      if(!tfile->includes[i].system) {
+        assert(files->count(tfile->includes[i].id));
+        tempfile = *tfile;
+        tempfile.includes.erase(tempfile.includes.begin() + i);
+        tempfile.includes.insert(tempfile.includes.begin() + i, (*files)[tfile->includes[i].id].includes.begin(), (*files)[tfile->includes[i].id].includes.end());
+        if(compiles(start, tempfile)) {
+          // Splice its children!
+          printf("  %s: spliced %s\n", start.c_str(), tfile->includes[i].id.c_str());
+          for(int j = 0; j < tfile->depends.size(); j++)
+            tfile->depends[j]->includes.push_back(tfile->includes[i]);
+          *tfile = tempfile;
+          continue;
+        }
+      }
+      // Keep it around!
+      printf("  %s: preserved %s\n", start.c_str(), tfile->includes[i].id.c_str());
+      i++;
+    }
+    tfile->state = 2;
+  }
 }
 
 int main() {
@@ -208,6 +256,9 @@ int main() {
       if(!itr->second.includes[i].system) {
         if(!filz.count(itr->second.includes[i].id)) {
           printf("Failure: %s is not found!", itr->second.includes[i].id.c_str());
+          assert(0);
+        } else {
+          itr->second.depends.push_back(&filz[itr->second.includes[i].id]);
         }
       }
     }
@@ -219,5 +270,9 @@ int main() {
     printf("  %s\n", itr->first.c_str());
     assert(compiles(itr->first, itr->second));
   }
+  
+  printf("Optimizizing!\n");
+  for(map<string, File>::iterator itr = filz.begin(); itr != filz.end(); itr++)
+    optimize(itr->first, &filz);
 
 };
