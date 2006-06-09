@@ -7,8 +7,18 @@
 #include <fstream>
 #include <sys/types.h>
 #include <dirent.h>
+#include <functional> // not needed
 
 using namespace std;
+
+#if 0
+const string root = "/cygdrive/c/werk/sea/d-net";
+const bool dn = true;
+#else
+const string root = "/cygdrive/c/werk/sea/includecull";
+const bool dn = false;
+#endif
+
 
 string suffix(const string &str) {
   char *strr = strrchr(str.c_str(), '.');
@@ -60,7 +70,7 @@ Include::Include(const string &str) {
 
 bool operator<(const Include &lhs, const Include &rhs) {
   if(lhs.system != rhs.system)
-    return lhs.system > rhs.system;
+    return lhs.system < rhs.system;
   
   if(count(lhs.id.begin(), lhs.id.end(), '.') != count(rhs.id.begin(), rhs.id.end(), '.'))
       return count(lhs.id.begin(), lhs.id.end(), '.') < count(rhs.id.begin(), rhs.id.end(), '.');
@@ -78,20 +88,49 @@ public:
   int includepos;
   vector<Include> includes;
 
+  void sort_includes(const string &fnam);
+
   File();
   explicit File(const string &str);
 };
+
+class Incsort {
+public:
+  string vl;
+
+  bool operator()(const Include &lhs, const Include &rhs) const {
+    if(lhs.id == vl || rhs.id == vl) {
+      if(lhs.id == vl && rhs.id == vl)
+        return false;
+      return lhs.id == vl;
+    }
+    return lhs < rhs;
+  }
+  
+  Incsort(const string &in_vl) {
+    printf("incsort %s\n", in_vl.c_str());
+    vl = in_vl;
+  }
+};
+
+void File::sort_includes(const string &fnam) {
+  string pri = fnam;
+  pri.erase(find(pri.begin(), pri.end(), '.'), pri.end());
+  pri += ".h";
+  sort(includes.begin(), includes.end(), Incsort(pri));
+}
 
 File::File() { };
 File::File(const string &str) {
   includepos = 0;
   int incl = 0;
-  ifstream ifs(str.c_str());
+  ifstream ifs((root + "/" + str).c_str());
   assert(ifs);
   string gorm;
   while(getline(ifs, gorm)) {
     if(isWhitespace(gorm)) {
-      data.push_back(gorm);
+      if(gorm != "using namespace std;")
+        data.push_back(gorm);
     } else if(isInclude(gorm)) {
       assert(incl != 2);
       if(incl == 0) {
@@ -105,17 +144,17 @@ File::File(const string &str) {
       data.push_back(gorm);
     }
   }
-  sort(includes.begin(), includes.end());
+  sort_includes(str);
   includes.erase(unique(includes.begin(), includes.end()), includes.end());
   printf("  Got %d lines, %d includes starting at %d\n", data.size(), includes.size(), includepos);
   for(int i = 0; i < includes.size(); i++) {
     includes[i].print();
   }
 }
-
-const string root = "/cygdrive/c/werk/sea/d-net";
  
 bool compiles(const string &filname, const File &file) {
+  File nf = file;
+  nf.sort_includes(filname);
   {
     ofstream ofs((root + "/" + filname).c_str());
     for(int i = 0; i < file.data.size(); i++) {
@@ -138,7 +177,10 @@ bool compiles(const string &filname, const File &file) {
   }
   
   char beefy[256];
-  sprintf(beefy, "cd %s && g++ `sdl-config --cflags` -mno-cygwin -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -c -o /dev/null %s", root.c_str(), filname.c_str());
+  if(dn)
+    sprintf(beefy, "cd %s && g++ `sdl-config --cflags` -mno-cygwin -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -c -o /dev/null %s", root.c_str(), filname.c_str());
+  else
+    sprintf(beefy, "cd %s && g++ -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -c -o /dev/null %s", root.c_str(), filname.c_str());
   int rv = system(beefy);
   return rv == 0;
 }
@@ -154,7 +196,7 @@ int main() {
     if(suffix(rd->d_name) == "cpp" || suffix(rd->d_name) == "cc" || suffix(rd->d_name) == "c" || suffix(rd->d_name) == "h") { // I refuse to read .C files on principle
       printf("  Processing %s\n", rd->d_name);
       assert(!filz.count(rd->d_name));
-      filz[rd->d_name] = File(root + "/" + rd->d_name);
+      filz[rd->d_name] = File(rd->d_name);
     }
   }
 
