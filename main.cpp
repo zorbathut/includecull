@@ -7,18 +7,20 @@
 #include <fstream>
 #include <sys/types.h>
 #include <dirent.h>
-#include <functional> // not needed
 
 using namespace std;
 
-#if 0
-const string root = "/cygdrive/c/werk/sea/d-net";
+#if 1
+const string root = "/cygdrive/c/werk/sea/d-net2";
 const bool dn = true;
 #else
 const string root = "/cygdrive/c/werk/sea/includecull";
 const bool dn = false;
 #endif
 
+bool donttouch(const string &str) {
+  return strstr(str.c_str(), "-imp.h") || strstr(str.c_str(), "-inl.h");
+}
 
 string suffix(const string &str) {
   char *strr = strrchr(str.c_str(), '.');
@@ -91,6 +93,7 @@ public:
   int state;
 
   void sort_includes(const string &fnam);
+  void uniqify(const string &fnam);
 
   File();
   explicit File(const string &str);
@@ -119,6 +122,11 @@ void File::sort_includes(const string &fnam) {
   pri.erase(find(pri.begin(), pri.end(), '.'), pri.end());
   pri += ".h";
   sort(includes.begin(), includes.end(), Incsort(pri));
+}
+
+void File::uniqify(const string &fnam) {
+  sort_includes(fnam);
+  includes.erase(unique(includes.begin(), includes.end()), includes.end());
 }
 
 File::File() { state = 1; };  // break shit
@@ -187,9 +195,15 @@ bool compiles(const string &filname, const File &file) {
   return rv == 0;
 }
 
-void optimize(const string &start, map<string, File> *files) {
+void optimize(string start, map<string, File> *files) {
+  if(donttouch(start))
+    return;
   File *tfile = &(*files)[start];
   assert(tfile->state != 1);
+  if(!compiles(start, *tfile)) {
+    printf("%s no longer compiles! Aborting.\n", start.c_str());
+    assert(0);
+  }
   if(tfile->state == 0) {
     tfile->state = 1;
     for(int i = 0; i < tfile->includes.size(); i++) {
@@ -197,15 +211,21 @@ void optimize(const string &start, map<string, File> *files) {
         optimize(tfile->includes[i].id, files);
       }
     }
+    printf("  processing %s\n", start.c_str());
+    tfile->uniqify(start);
     for(int i = 0; i < tfile->includes.size(); ) {
       //printf("  %s: considering %s, %d/%d\n", start.c_str(), tfile->includes[i].id.c_str(), i, tfile->includes.size());
       //printf("  %s: considering %s\n", start.c_str(), tfile->includes[i].id.c_str());
+      if(donttouch(tfile->includes[i].id)) {
+        i++;
+        continue;
+      }
       File tempfile;
       tempfile = *tfile;
       tempfile.includes.erase(tempfile.includes.begin() + i);
       if(compiles(start, tempfile)) {
         // Remove it entirely!
-        printf("  %s: removed %s\n", start.c_str(), tfile->includes[i].id.c_str());
+        printf("    removed %s (%d/%d)\n", tfile->includes[i].id.c_str(), i, tfile->includes.size());
         for(int j = 0; j < tfile->depends.size(); j++)
           tfile->depends[j]->includes.push_back(tfile->includes[i]);
         *tfile = tempfile;
@@ -218,7 +238,7 @@ void optimize(const string &start, map<string, File> *files) {
         tempfile.includes.insert(tempfile.includes.begin() + i, (*files)[tfile->includes[i].id].includes.begin(), (*files)[tfile->includes[i].id].includes.end());
         if(compiles(start, tempfile)) {
           // Splice its children!
-          printf("  %s: spliced %s\n", start.c_str(), tfile->includes[i].id.c_str());
+          printf("    spliced %s (%d/%d)\n", tfile->includes[i].id.c_str(), i, tfile->includes.size());
           for(int j = 0; j < tfile->depends.size(); j++)
             tfile->depends[j]->includes.push_back(tfile->includes[i]);
           *tfile = tempfile;
@@ -226,11 +246,12 @@ void optimize(const string &start, map<string, File> *files) {
         }
       }
       // Keep it around!
-      printf("  %s: preserved %s\n", start.c_str(), tfile->includes[i].id.c_str());
+      printf("    preserved %s (%d/%d)\n", tfile->includes[i].id.c_str(), i, tfile->includes.size());
       i++;
     }
     tfile->state = 2;
   }
+  assert(compiles(start, *tfile));  // this also resets the file to a known-good state
 }
 
 int main() {
@@ -258,7 +279,7 @@ int main() {
           printf("Failure: %s is not found!", itr->second.includes[i].id.c_str());
           assert(0);
         } else {
-          itr->second.depends.push_back(&filz[itr->second.includes[i].id]);
+          filz[itr->second.includes[i].id].depends.push_back(&itr->second);
         }
       }
     }
@@ -272,7 +293,9 @@ int main() {
   }
   
   printf("Optimizizing!\n");
-  for(map<string, File>::iterator itr = filz.begin(); itr != filz.end(); itr++)
+  for(map<string, File>::iterator itr = filz.begin(); itr != filz.end(); itr++) {
+    //if(itr->first == "float.cpp")
     optimize(itr->first, &filz);
+  }
 
 };
