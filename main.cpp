@@ -32,7 +32,7 @@ using namespace std;
 // Here is the root of your project. This tool won't currently search recursively.
 // Note that all headers must compile on their own.
 // Also note that this tool WILL modify files in this directory and may leave your project in an unusable state (if it has a bug, or your headers don't compile, or something bizarre goes wrong.)
-const string root = "/cygdrive/c/werk/sea/d-net";
+const string root = "/cygdrive/c/werk/sea/includecull/ttt";
 
 // This is the command it will use to build. It must have two %s's in it. The first will be replaced by your project root, the second will be replaced by the filename it's compiling. If you're using g++ I highly recommend basing it on the string:
 // "cd %s && g++ -x c++ -c -o /dev/null %s 2> /dev/null"
@@ -57,6 +57,13 @@ string suffix(const string &str) {
   return string(strr + 1);
 }
 
+string stripLevel(const string &str) {
+  if(count(str.begin(), str.end(), '/'))
+    return string(str.c_str(), (const char*)strrchr(str.c_str(), '/'));
+  assert(str != "");
+  return "";
+}
+
 bool isWhitespace(const string &gorm) {
   if(gorm == "using namespace std;")
     return true;
@@ -68,6 +75,34 @@ bool isWhitespace(const string &gorm) {
 
 bool isInclude(const string &gorm) {
   return strncmp("#include ", gorm.c_str(), strlen("#include ")) == 0;
+}
+
+bool fileExists(const string &st) {
+  struct stat stt;
+  return stat(st.c_str(), &stt) == 0;
+}
+
+string makeRealInclude(const string &rel, const string &abs) {
+  printf("    %s, %s\n", rel.c_str(), abs.c_str());
+  // first try to combine dotdots
+  if(strncmp(rel.c_str(), "../", 3) == 0) {
+    return makeRealInclude(rel.c_str() + 3, stripLevel(abs));
+  }
+
+  // then see if it exists in relative-space
+  if(abs.size() && fileExists(root + "/" + abs + "/" + rel)) {
+    printf("      relspace\n");
+    return abs + "/" + rel;
+  }
+
+  // next see if the file exists in absolute-space
+  if(fileExists(root + "/" + rel)) {
+    printf("      absspace\n");
+    return rel;
+  }
+  
+  assert(0);
+  return "";
 }
 
 class Include {
@@ -84,18 +119,21 @@ public:
   }
 
   Include();
-  explicit Include(const string &str);
+  explicit Include(const string &line, const string &file);
 };
 
 Include::Include() { };
-Include::Include(const string &str) {
-  assert(isInclude(str));
-  assert(str.size() >= 13); // this might be wrong but I don't care
-  assert(str[9] == '"' || str[9] == '<');
-  system = (str[9] == '<');
-  id = str.c_str() + 10;
+Include::Include(const string &line, const string &path) {
+  assert(isInclude(line));
+  assert(line.size() >= 13); // this might be wrong but I don't care
+  assert(line[9] == '"' || line[9] == '<');
+  system = (line[9] == '<');
+  id = line.c_str() + 10;
   id.erase(find(id.begin(), id.end(), '"'), id.end());
   id.erase(find(id.begin(), id.end(), '>'), id.end());
+  
+  if(!system)
+    id = makeRealInclude(id, path);
 }
 
 bool operator<(const Include &lhs, const Include &rhs) {
@@ -159,7 +197,7 @@ void File::uniqify(const string &fnam) {
 
 File::File() { state = 1; };  // break shit
 File::File(const string &str) {
-  includepos = 0;
+  includepos = -1;
   int incl = 0;
   ifstream ifs((root + "/" + str).c_str());
   assert(ifs);
@@ -174,7 +212,7 @@ File::File(const string &str) {
         includepos = data.size();
         incl = 1;
       }
-      includes.push_back(Include(gorm));
+      includes.push_back(Include(gorm, stripLevel(str)));
     } else {
       if(incl == 1)
         incl = 2;
@@ -289,7 +327,7 @@ vector<string> getFiles(const string &fileroot, const string &prefix) {
   assert(dr);
   while(struct dirent *rd = readdir(dr)) {
     struct stat stt;
-    stat((fileroot + "/" + rd->d_name).c_str(), &stt);
+    assert(!stat((fileroot + "/" + rd->d_name).c_str(), &stt));
     if(stt.st_mode & S_IFDIR) {
       if(rd->d_name[0] == '.')
         continue;
@@ -311,8 +349,9 @@ int main() {
   printf("Scanning\n");
   {
     vector<string> fnames = getFiles(root, "/");
+    sort(fnames.begin(), fnames.end());
     for(int i = 0; i < fnames.size(); i++) {
-      if(suffix(fnames[i]) == "cpp" || suffix(fnames[i]) == "cc" || suffix(fnames[i]) == "c" || suffix(fnames[i]) == "h") { // I refuse to read .C files on principle
+      if(suffix(fnames[i]) == "cpp" || suffix(fnames[i]) == "cc" || suffix(fnames[i]) == "c" || suffix(fnames[i]) == "h" || suffix(fnames[i]) == "hpp") { // I refuse to read .C files on principle
         printf("  Processing %s\n", fnames[i].c_str());
         assert(!filz.count(fnames[i]));
         filz[fnames[i].c_str() + 1] = File(fnames[i].c_str() + 1);  // get rid of that /, there must be a better way to do this
@@ -327,7 +366,7 @@ int main() {
     for(int i = 0; i < itr->second.includes.size(); i++) {
       if(!itr->second.includes[i].system) {
         if(!filz.count(itr->second.includes[i].id)) {
-          printf("Failure: %s is not found!", itr->second.includes[i].id.c_str());
+          printf("Failure: %s is not found in %s!", itr->second.includes[i].id.c_str(), itr->first.c_str());
           assert(0);
         } else {
           filz[itr->second.includes[i].id].depends.push_back(&itr->second);
