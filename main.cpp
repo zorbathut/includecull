@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <dirent.h>
 
 using namespace std;
@@ -35,7 +36,7 @@ const string root = "/cygdrive/c/werk/sea/d-net";
 
 // This is the command it will use to build. It must have two %s's in it. The first will be replaced by your project root, the second will be replaced by the filename it's compiling. If you're using g++ I highly recommend basing it on the string:
 // "cd %s && g++ -x c++ -c -o /dev/null %s 2> /dev/null"
-// because this will force it to compile headers as source files and won't spew garbage places.
+// because this will force it to compile headers as source files and won't spew output garbage to random places.
 // Must return a value appropriately if it fails or succeeds.
 // const string buildcmd = "cd %s && g++ -x c++ -c -o /dev/null %s 2> /dev/null";
 
@@ -280,22 +281,46 @@ void optimize(string start, map<string, File> *files) {
   assert(compiles(start, *tfile));  // this also resets the file to a known-good state
 }
 
+vector<string> getFiles(const string &fileroot, const string &prefix) {
+  vector<string> rv;
+  
+  printf("Scanning %s\n", fileroot.c_str());
+  DIR *dr = opendir(fileroot.c_str());
+  assert(dr);
+  while(struct dirent *rd = readdir(dr)) {
+    struct stat stt;
+    stat((fileroot + "/" + rd->d_name).c_str(), &stt);
+    if(stt.st_mode & S_IFDIR) {
+      if(rd->d_name[0] == '.')
+        continue;
+      vector<string> td = getFiles(fileroot + "/" + rd->d_name, prefix + rd->d_name + "/");
+      rv.insert(rv.end(), td.begin(), td.end());
+    } else {
+      rv.push_back(prefix + rd->d_name);
+    }
+  }
+  closedir(dr);
+  
+  return rv;
+};
+
 int main() {
   map<string, File> filz;
   
   // First: find all .cpp .cc .h files
   printf("Scanning\n");
-  DIR *dr = opendir(root.c_str());
-  assert(dr);
-  while(struct dirent *rd = readdir(dr)) {
-    if(suffix(rd->d_name) == "cpp" || suffix(rd->d_name) == "cc" || suffix(rd->d_name) == "c" || suffix(rd->d_name) == "h") { // I refuse to read .C files on principle
-      printf("  Processing %s\n", rd->d_name);
-      assert(!filz.count(rd->d_name));
-      filz[rd->d_name] = File(rd->d_name);
+  {
+    vector<string> fnames = getFiles(root, "/");
+    for(int i = 0; i < fnames.size(); i++) {
+      if(suffix(fnames[i]) == "cpp" || suffix(fnames[i]) == "cc" || suffix(fnames[i]) == "c" || suffix(fnames[i]) == "h") { // I refuse to read .C files on principle
+        printf("  Processing %s\n", fnames[i].c_str());
+        assert(!filz.count(fnames[i]));
+        filz[fnames[i].c_str() + 1] = File(fnames[i].c_str() + 1);  // get rid of that /, there must be a better way to do this
+      } else {
+        printf("  Ignoring %s\n", fnames[i].c_str());
+      }
     }
   }
-
-  closedir(dr);
   
   // Second: make sure all our non-system dependencies are accounted for
   for(map<string, File>::iterator itr = filz.begin(); itr != filz.end(); itr++) {
