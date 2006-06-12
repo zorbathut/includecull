@@ -1,3 +1,19 @@
+/* IncludeCull - Automatically strips unnecessary headers out of projects.
+    Copyright (C) 2006 Ben Wilhelm (ZorbaTHut)
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; only version 2.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+*/
 
 #include <string>
 #include <set>
@@ -10,17 +26,28 @@
 
 using namespace std;
 
-#if 1
-const string root = "/cygdrive/c/werk/sea/d-net2";
-const bool dn = true;
-#else
-const string root = "/cygdrive/c/werk/sea/includecull";
-const bool dn = false;
-#endif
+// Configuration section:
 
+// Here is the root of your project. This tool won't currently search recursively.
+// Note that all headers must compile on their own.
+// Also note that this tool WILL modify files in this directory and may leave your project in an unusable state (if it has a bug, or your headers don't compile, or something bizarre goes wrong.)
+const string root = "/cygdrive/c/werk/sea/d-net";
+
+// This is the command it will use to build. It must have two %s's in it. The first will be replaced by your project root, the second will be replaced by the filename it's compiling. If you're using g++ I highly recommend basing it on the string:
+// "cd %s && g++ -x c++ -c -o /dev/null %s 2> /dev/null"
+// because this will force it to compile headers as source files and won't spew garbage places.
+// Must return a value appropriately if it fails or succeeds.
+// const string buildcmd = "cd %s && g++ -x c++ -c -o /dev/null %s 2> /dev/null";
+
+// This is what Zorba uses for his own project.
+const string buildcmd = "cd %s && g++ `sdl-config --cflags` -mno-cygwin -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -x c++ -c -o /dev/null %s 2> /dev/null";
+
+// This little function allows you to specify files that the searcher won't remove. Useful for template implementation files. Obviously, if it turns out the template implementation isn't necessary, it still won't be removed - this tool only compiles, not links.
 bool donttouch(const string &str) {
   return strstr(str.c_str(), "-imp.h") || strstr(str.c_str(), "-inl.h");
 }
+
+// End of configuration section!
 
 string suffix(const string &str) {
   char *strr = strrchr(str.c_str(), '.');
@@ -186,11 +213,10 @@ bool compiles(const string &filname, const File &file) {
     }
   }
   
-  char beefy[256];
-  if(dn)
-    sprintf(beefy, "cd %s && g++ `sdl-config --cflags` -mno-cygwin -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -x c++ -c -o /dev/null %s 2> /dev/null", root.c_str(), filname.c_str());
-  else
-    sprintf(beefy, "cd %s && g++ -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -x c++ -c -o /dev/null %s 2> /dev/null", root.c_str(), filname.c_str());
+  char beefy[2048]; // Shut the fuck up.
+  sprintf(beefy, buildcmd.c_str(), root.c_str(), filname.c_str());
+  assert(strlen(beefy) < 2048); // I guess this'll crash one way or another if it's too long
+  
   int rv = system(beefy);
   return rv == 0;
 }
@@ -289,7 +315,10 @@ int main() {
   printf("Testing builds\n");
   for(map<string, File>::iterator itr = filz.begin(); itr != filz.end(); itr++) {
     printf("  %s\n", itr->first.c_str());
-    assert(compiles(itr->first, itr->second));
+    if(!compiles(itr->first, itr->second)) {
+      printf("%s doesn't compile cleanly! Aborting!\n", itr->first.c_str());
+      return 1;
+    }
   }
   
   printf("Optimizizing!\n");
