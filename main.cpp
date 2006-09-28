@@ -32,7 +32,7 @@ using namespace std;
 // Here is the root of your project. This tool won't currently search recursively.
 // Note that all headers must compile on their own.
 // Also note that this tool WILL modify files in this directory and may leave your project in an unusable state (if it has a bug, or your headers don't compile, or something bizarre goes wrong.)
-const string root = "/cygdrive/c/werk/sea/includecull/ttt";
+const string root = "/cygdrive/c/werk/d-net";
 
 // This is the command it will use to build. It must have two %s's in it. The first will be replaced by your project root, the second will be replaced by the filename it's compiling. If you're using g++ I highly recommend basing it on the string:
 // "cd %s && g++ -x c++ -c -o /dev/null %s 2> /dev/null"
@@ -227,8 +227,8 @@ File::File(const string &str) {
   }
   state = 0;
 }
- 
-bool compiles(const string &filname, const File &file) {
+
+void writeOut(const string &filname, const File &file) {
   File nf = file;
   nf.sort_includes(filname);
   {
@@ -251,6 +251,15 @@ bool compiles(const string &filname, const File &file) {
       ofs << endl;
     }
   }
+}
+
+void writeAllOut(map<string, File> *files) {
+  for(map<string, File>::iterator itr = files->begin(); itr != files->end(); itr++)
+    writeOut(itr->first, itr->second);
+}
+
+bool compiles(const string &filname, const File &file) {
+  writeOut(filname, file);
   
   char beefy[2048]; // Shut the fuck up.
   sprintf(beefy, buildcmd.c_str(), root.c_str(), filname.c_str());
@@ -270,6 +279,8 @@ void optimize(string start, map<string, File> *files) {
     assert(0);
   }
   if(tfile->state == 0) {
+    //writeAllOut(files);
+    //assert(compiles("game.cpp", (*files)["game.cpp"]));
     tfile->state = 1;
     for(int i = 0; i < tfile->includes.size(); i++) {
       if(!tfile->includes[i].system) {
@@ -282,23 +293,25 @@ void optimize(string start, map<string, File> *files) {
       //printf("  %s: considering %s, %d/%d\n", start.c_str(), tfile->includes[i].id.c_str(), i, tfile->includes.size());
       //printf("  %s: considering %s\n", start.c_str(), tfile->includes[i].id.c_str());
       if(donttouch(tfile->includes[i].id)) {
+        printf("    avoided %s (%d/%d)\n", tfile->includes[i].id.c_str(), i, tfile->includes.size());
         i++;
         continue;
       }
-      File tempfile;
-      tempfile = *tfile;
-      tempfile.includes.erase(tempfile.includes.begin() + i);
-      if(compiles(start, tempfile)) {
-        // Remove it entirely!
-        printf("    removed %s (%d/%d)\n", tfile->includes[i].id.c_str(), i, tfile->includes.size());
-        for(int j = 0; j < tfile->depends.size(); j++)
-          tfile->depends[j]->includes.push_back(tfile->includes[i]);
-        *tfile = tempfile;
-        continue;
+      {
+        File tempfile = *tfile;
+        tempfile.includes.erase(tempfile.includes.begin() + i);
+        if(compiles(start, tempfile)) {
+          // Remove it entirely!
+          printf("    removed %s (%d/%d)\n", tfile->includes[i].id.c_str(), i, tfile->includes.size());
+          for(int j = 0; j < tfile->depends.size(); j++)
+            tfile->depends[j]->includes.push_back(tfile->includes[i]);
+          *tfile = tempfile;
+          continue;
+        }
       }
       if(!tfile->includes[i].system) {
         assert(files->count(tfile->includes[i].id));
-        tempfile = *tfile;
+        File tempfile = *tfile;
         tempfile.includes.erase(tempfile.includes.begin() + i);
         tempfile.includes.insert(tempfile.includes.begin() + i, (*files)[tfile->includes[i].id].includes.begin(), (*files)[tfile->includes[i].id].includes.end());
         if(compiles(start, tempfile)) {
@@ -314,9 +327,12 @@ void optimize(string start, map<string, File> *files) {
       printf("    preserved %s (%d/%d)\n", tfile->includes[i].id.c_str(), i, tfile->includes.size());
       i++;
     }
+    assert(compiles(start, *tfile));  // this also resets the file to a known-good state
+    writeOut(start, *tfile);
+    //writeAllOut(files);
+    //assert(compiles("game.cpp", (*files)["game.cpp"]));
     tfile->state = 2;
   }
-  assert(compiles(start, *tfile));  // this also resets the file to a known-good state
 }
 
 vector<string> getFiles(const string &fileroot, const string &prefix) {
@@ -377,6 +393,7 @@ int main() {
   
   // Third: make sure everything actually builds with our re-ordered headers
   printf("Testing builds\n");
+  writeAllOut(&filz);
   for(map<string, File>::iterator itr = filz.begin(); itr != filz.end(); itr++) {
     printf("  %s\n", itr->first.c_str());
     if(!compiles(itr->first, itr->second)) {
