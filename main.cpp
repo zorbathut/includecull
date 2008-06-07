@@ -41,7 +41,7 @@ const string root = "/cygdrive/c/werk/d-net";
 // const string buildcmd = "cd %s && g++ -x c++ -c -o /dev/null %s 2> /dev/null";
 
 // This is what Zorba uses for his own project.
-const string buildcmd = "cd %s && scons -j6 build/%s.*.o 2> /dev/null > /dev/null";
+const string buildcmd = "cd %s && scons -j6 includecull.%s 2> /dev/null > /dev/null";
 
 // This little function allows you to specify files that the searcher won't remove. Useful for template implementation files. Obviously, if it turns out the template implementation isn't necessary, it still won't be removed - this tool only compiles, not links.
 bool donttouch(const string &str) {
@@ -256,6 +256,8 @@ void writeOut(const string &filname, const File &file) {
         bool curs = false;
         for(int j = 0; j < file.includes.size(); j++) {
           string turg(file.includes[j].id.begin(), find(file.includes[j].id.begin(), file.includes[j].id.end(), '/'));
+          if(turg == file.includes[j].id)
+            turg = "";
           bool turs = file.includes[j].system;
           
           if(turg != curg || turs != curs) {
@@ -302,11 +304,11 @@ bool compiles(const string &filname, const File &file) {
 }
 
 void optimize(string start, map<string, File> *files) {
-  if(donttouch(start))
-    return;
   File *tfile = &(*files)[start];
-  if(tfile->ignore)
-    return; // DENY
+  if(donttouch(start) || tfile->ignore) {
+    tfile->state = 2;
+    return;
+  }
   assert(tfile->state != 1);
   if(!compiles(start, *tfile)) {
     printf("%s no longer compiles! Aborting.\n", start.c_str());
@@ -324,6 +326,13 @@ void optimize(string start, map<string, File> *files) {
     printf("  processing %s\n", start.c_str());
     tfile->uniqify(start);
     for(int i = 0; i < tfile->includes.size(); ) {
+      for(int k = 0; k < tfile->includes.size(); k++) {
+        if(!tfile->includes[k].system && (*files)[tfile->includes[k].id].state != 2) {
+          printf("Massive fail, %s isn't done\n", tfile->includes[k].id.c_str());
+          assert(0);
+        }
+      }
+        
       //printf("  %s: considering %s, %d/%d\n", start.c_str(), tfile->includes[i].id.c_str(), i, tfile->includes.size());
       //printf("  %s: considering %s\n", start.c_str(), tfile->includes[i].id.c_str());
       if(donttouch(tfile->includes[i].id)) {
@@ -363,6 +372,7 @@ void optimize(string start, map<string, File> *files) {
     }
     assert(compiles(start, *tfile));  // this also resets the file to a known-good state
     writeOut(start, *tfile);
+    assert(compiles(start, *tfile));  // seriously what
     //writeAllOut(files);
     //assert(compiles("game.cpp", (*files)["game.cpp"]));
     tfile->state = 2;
@@ -398,12 +408,6 @@ vector<string> getFiles(const string &fileroot, const string &prefix) {
 
 int main() {
   map<string, File> filz;
-  
-  {
-    char beef[1024];
-    sprintf(beef, "cd %s && scons -j6 includecullsetup", root.c_str());
-    system(beef);
-  }
   
   // First: find all .cpp .cc .h files
   printf("Scanning\n");
@@ -445,6 +449,8 @@ int main() {
       return 1;
     }
   }
+  
+  optimize("core.cpp", &filz);
   
   printf("Optimizizing!\n");
   for(map<string, File>::iterator itr = filz.begin(); itr != filz.end(); itr++) {
