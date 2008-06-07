@@ -41,11 +41,15 @@ const string root = "/cygdrive/c/werk/d-net";
 // const string buildcmd = "cd %s && g++ -x c++ -c -o /dev/null %s 2> /dev/null";
 
 // This is what Zorba uses for his own project.
-const string buildcmd = "cd %s && g++ `sdl-config --cflags` -mno-cygwin -DVECTOR_PARANOIA -Wall -Wno-sign-compare -Wno-uninitialized -x c++ -c -o /dev/null %s 2> /dev/null";
+const string buildcmd = "cd %s && scons -j6 build/%s.*.o 2> /dev/null > /dev/null";
 
 // This little function allows you to specify files that the searcher won't remove. Useful for template implementation files. Obviously, if it turns out the template implementation isn't necessary, it still won't be removed - this tool only compiles, not links.
 bool donttouch(const string &str) {
   return strstr(str.c_str(), "-imp.h") || strstr(str.c_str(), "-inl.h");
+}
+
+bool totallyignore(const string &str) {
+ return strncmp(str.c_str(), "os", 2) == 0 || strstr(str.c_str(), "minizip");
 }
 
 // End of configuration section!
@@ -140,6 +144,9 @@ bool operator<(const Include &lhs, const Include &rhs) {
   if(lhs.system != rhs.system)
     return lhs.system < rhs.system;
   
+  if(lhs.id == "wx/wx.h" && rhs.id != "wx/wx.h" && strncmp(rhs.id.c_str(), "wx/", 3) == 0)
+    return true;  // wx/wx.h goes before all other wx/ headers
+  
   if(count(lhs.id.begin(), lhs.id.end(), '.') != count(rhs.id.begin(), rhs.id.end(), '.'))
       return count(lhs.id.begin(), lhs.id.end(), '.') < count(rhs.id.begin(), rhs.id.end(), '.');
   
@@ -157,6 +164,8 @@ public:
   vector<Include> includes;
   vector<File *> depends;
   int state;
+
+  bool ignore;
 
   void sort_includes(const string &fnam);
   void uniqify(const string &fnam);
@@ -197,6 +206,12 @@ void File::uniqify(const string &fnam) {
 
 File::File() { state = 1; };  // break shit
 File::File(const string &str) {
+  if(totallyignore(str)) {
+    ignore = true;
+    return;
+  }
+  
+  ignore = false;
   includepos = -1;
   int incl = 0;
   ifstream ifs((root + "/" + str).c_str());
@@ -229,13 +244,26 @@ File::File(const string &str) {
 }
 
 void writeOut(const string &filname, const File &file) {
+  if(file.ignore)
+    return;
   File nf = file;
   nf.sort_includes(filname);
   {
     ofstream ofs((root + "/" + filname).c_str());
     for(int i = 0; i < file.data.size(); i++) {
       if(i == file.includepos) {
+        string curg = "";
+        bool curs = false;
         for(int j = 0; j < file.includes.size(); j++) {
+          string turg(file.includes[j].id.begin(), find(file.includes[j].id.begin(), file.includes[j].id.end(), '/'));
+          bool turs = file.includes[j].system;
+          
+          if(turg != curg || turs != curs) {
+            ofs << endl;
+            curg = turg;
+            curs = turs;
+          }
+          
           ofs << "#include ";
           if(file.includes[j].system) {
             ofs << "<" << file.includes[j].id << ">";
@@ -259,12 +287,16 @@ void writeAllOut(map<string, File> *files) {
 }
 
 bool compiles(const string &filname, const File &file) {
+  if(file.ignore)
+    return true;
+  
   writeOut(filname, file);
   
   char beefy[2048]; // Shut the fuck up.
   sprintf(beefy, buildcmd.c_str(), root.c_str(), filname.c_str());
   assert(strlen(beefy) < 2048); // I guess this'll crash one way or another if it's too long
   
+  //printf("%s\n", beefy);
   int rv = system(beefy);
   return rv == 0;
 }
@@ -273,6 +305,8 @@ void optimize(string start, map<string, File> *files) {
   if(donttouch(start))
     return;
   File *tfile = &(*files)[start];
+  if(tfile->ignore)
+    return; // DENY
   assert(tfile->state != 1);
   if(!compiles(start, *tfile)) {
     printf("%s no longer compiles! Aborting.\n", start.c_str());
@@ -344,6 +378,10 @@ vector<string> getFiles(const string &fileroot, const string &prefix) {
   while(struct dirent *rd = readdir(dr)) {
     struct stat stt;
     assert(!stat((fileroot + "/" + rd->d_name).c_str(), &stt));
+    
+    if(strcmp(rd->d_name, "build") == 0)
+      continue;
+    
     if(stt.st_mode & S_IFDIR) {
       if(rd->d_name[0] == '.')
         continue;
@@ -360,6 +398,12 @@ vector<string> getFiles(const string &fileroot, const string &prefix) {
 
 int main() {
   map<string, File> filz;
+  
+  {
+    char beef[1024];
+    sprintf(beef, "cd %s && scons -j6 includecullsetup", root.c_str());
+    system(beef);
+  }
   
   // First: find all .cpp .cc .h files
   printf("Scanning\n");
