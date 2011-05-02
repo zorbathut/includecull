@@ -1,0 +1,5 @@
+Includecull is a utility intended to strip C or C++ projects of all their unnecessary include files. It does this through a largely brute-force process of rewriting the files and attempting to rebuild them. While it works quite well, it currently requires hardcoded modifications per project, and therefore isn't particularly usable for people who aren't me.
+
+While this project is technically not abandoned, I haven't put much time into it for a while. I'll cheerfully answer questions but any major changes would be up to you.
+
+Offered under BSD license. If you want, I'll make it a little more official.
